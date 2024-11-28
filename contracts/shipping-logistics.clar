@@ -67,3 +67,69 @@
       { location: location, status: status })
     (ok true)))
 
+(define-public (file-dispute (shipment-id uint) (amount uint))
+  (let ((shipment (unwrap! (map-get? shipments { id: shipment-id }) ERR_NOT_FOUND)))
+    (asserts! (is-eq tx-sender (get receiver shipment)) ERR_UNAUTHORIZED)
+    (map-set disputes
+      { shipment-id: shipment-id }
+      { claimant: tx-sender, amount: amount, status: "filed" })
+    (ok true)))
+
+(define-public (resolve-dispute (shipment-id uint) (approved bool))
+  (let ((dispute (unwrap! (map-get? disputes { shipment-id: shipment-id }) ERR_NOT_FOUND))
+        (shipment (unwrap! (map-get? shipments { id: shipment-id }) ERR_NOT_FOUND)))
+    (asserts! (is-eq tx-sender (get sender shipment)) ERR_UNAUTHORIZED)
+    (if approved
+      (begin
+        (try! (stx-transfer? (get amount dispute) tx-sender (get claimant dispute)))
+        (map-set disputes
+          { shipment-id: shipment-id }
+          (merge dispute { status: "approved" }))
+        (ok true))
+      (begin
+        (map-set disputes
+          { shipment-id: shipment-id }
+          (merge dispute { status: "rejected" }))
+        (ok true)))))
+
+(define-public (create-container)
+  (let ((container-id (+ (var-get container-counter) u1)))
+    (map-set containers
+      { id: container-id }
+      { owner: tx-sender, location: "warehouse", status: "available" })
+    (var-set container-counter container-id)
+    (ok container-id)))
+
+(define-public (create-vessel (name (string-ascii 100)))
+  (let ((vessel-id (+ (var-get vessel-counter) u1)))
+    (map-set vessels
+      { id: vessel-id }
+      { name: name, owner: tx-sender, location: "port", status: "docked" })
+    (var-set vessel-counter vessel-id)
+    (ok vessel-id)))
+
+(define-public (buy-fractional-ownership (asset-type (string-ascii 10)) (asset-id uint) (shares uint))
+  (let ((current-ownership (default-to { shares: u0 } (map-get? fractional-ownership { asset-type: asset-type, asset-id: asset-id, owner: tx-sender }))))
+    (map-set fractional-ownership
+      { asset-type: asset-type, asset-id: asset-id, owner: tx-sender }
+      { shares: (+ (get shares current-ownership) shares) })
+    (ok true)))
+
+;; Read-only functions
+(define-read-only (get-shipment (shipment-id uint))
+  (map-get? shipments { id: shipment-id }))
+
+(define-read-only (get-tracking-data (shipment-id uint))
+  (map-get? tracking-data { shipment-id: shipment-id, timestamp: (unwrap-panic (get-block-info? time (- block-height u1))) }))
+
+(define-read-only (get-dispute (shipment-id uint))
+  (map-get? disputes { shipment-id: shipment-id }))
+
+(define-read-only (get-container (container-id uint))
+  (map-get? containers { id: container-id }))
+
+(define-read-only (get-vessel (vessel-id uint))
+  (map-get? vessels { id: vessel-id }))
+
+(define-read-only (get-fractional-ownership (asset-type (string-ascii 10)) (asset-id uint) (owner principal))
+  (map-get? fractional-ownership { asset-type: asset-type, asset-id: asset-id, owner: owner }))
